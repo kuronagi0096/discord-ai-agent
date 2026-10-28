@@ -40,7 +40,8 @@ Claude Code を選んだプロジェクトでは、従来どおり公式プラ�
 
 - Windows 10 / 11（Windows PowerShell 5.1）
 - CodexアプリまたはCodex CLIでChatGPTにログイン済みであること（Discord版はSDK同梱ランタイムを使うため、グローバルな `codex` コマンド自体は不要）
-- Claude Codeを使う場合は [Claude Code](https://docs.claude.com/claude-code)（`claude` コマンド）
+- Claude Codeを使う場合は [Claude Code](https://docs.claude.com/claude-code) の `claude` コマンド
+  - Claude のデスクトップアプリだけでは入りません。PowerShell で `irm https://claude.ai/install.ps1 | iex` を実行して入れ、新しいウィンドウで `claude --version` が動くか確かめてください。
 - Node.js 18 以上（Codex SDK と Discord ボット用）
 - [bun](https://bun.sh)（プラグインとこのフォルダのスクリプトを動かす）
 - Discord のサーバー（自分が管理できるもの）と、プロジェクトごとのボット

@@ -30,9 +30,24 @@ Write-Host "フォルダ：$Root"
 Step '1. 必要なもの'
 $missing = $false
 $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
-if ($hasClaude) { Write-Host 'claude … OK' }
+# 公式インストーラーの入れ先。入れた直後や PATH に入っていないときは、ここにだけある
+$claudeDir = Join-Path $env:USERPROFILE '.local\bin'
+if (-not $hasClaude -and (Test-Path -LiteralPath (Join-Path $claudeDir 'claude.exe'))) {
+    Write-Host "claude コマンドは $claudeDir にありますが、PATH（コマンドを探す場所）に入っていません。" -ForegroundColor Yellow
+    if (Ask-YesNo 'PATH に足しますか？（このユーザーだけ）') {
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        [Environment]::SetEnvironmentVariable('Path', (@($userPath, $claudeDir) | Where-Object { $_ }) -join ';', 'User')
+        $env:Path = "$env:Path;$claudeDir"
+        $hasClaude = $true
+    }
+}
+if ($hasClaude) { Write-Host 'claude コマンド（Claude Code）… OK' }
 else {
-    Write-Host 'claude が見つかりません（Claude Code を使う場合だけ必要です）。2・3 番は飛ばします。' -ForegroundColor Yellow
+    Write-Host 'claude コマンド（Claude Code）が見つかりません。' -ForegroundColor Yellow
+    Write-Host '  Claude のデスクトップアプリを入れただけでは、このコマンドは入りません。'
+    Write-Host '  Claude Code を使うなら、PowerShell で次を実行して入れてから、新しいウィンドウで setup.cmd をやり直してください：'
+    Write-Host '    irm https://claude.ai/install.ps1 | iex'
+    Write-Host '  Codex だけ使うなら、このまま進めて大丈夫です（2・3 番は飛ばします）。'
 }
 $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
 $codexSdk = (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and

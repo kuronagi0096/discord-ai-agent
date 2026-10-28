@@ -9,8 +9,10 @@ import {
   Routes,
   SlashCommandBuilder,
 } from 'discord.js'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, dirname, extname, join } from 'node:path'
 
 const stateDir = process.env.DISCORD_STATE_DIR
 const projectPath = process.env.CODEX_PROJECT_PATH
@@ -111,7 +113,36 @@ function threadOptions() {
   }
 }
 
-const codex = new Codex()
+// Discord からは確認なしで動かすので、Codex アプリのプラグイン（コンピューター操作・ブラウザ・Slack など）と
+// ユーザー設定の MCP サーバーは使わせない。これらはサンドボックスの外で動き、workspace-write では縛れない。
+const OFF_FEATURES = [
+  'plugins', 'apps', 'remote_plugin', 'computer_use',
+  'browser_use', 'browser_use_external', 'in_app_browser', 'skill_mcp_dependency_install',
+]
+
+// SDK と同じ、このフォルダの node_modules に入っている codex.exe
+function codexBinary() {
+  const [pkg, triple] = process.arch === 'arm64'
+    ? ['@openai/codex-win32-arm64', 'aarch64-pc-windows-msvc']
+    : ['@openai/codex-win32-x64', 'x86_64-pc-windows-msvc']
+  const req = createRequire(createRequire(import.meta.url).resolve('@openai/codex/package.json'))
+  return join(dirname(req.resolve(`${pkg}/package.json`)), 'vendor', triple, 'bin', 'codex.exe')
+}
+
+// MCP サーバーは「全部消す」設定がないので、作業フォルダで見えるものを名前で 1 つずつ止める。
+// 一覧が取れなければ、止められたか分からないまま動かさないよう起動をやめる。
+function lockdownConfig() {
+  const features = Object.fromEntries(OFF_FEATURES.map(name => [name, false]))
+  const args = OFF_FEATURES.flatMap(name => ['-c', `features.${name}=false`])
+  const servers = JSON.parse(execFileSync(codexBinary(), [...args, 'mcp', 'list', '--json'], {
+    cwd: projectPath, encoding: 'utf8', windowsHide: true,
+  }))
+  const mcp_servers = Object.fromEntries(servers.map(s => [s.name, { enabled: false }]))
+  console.log(`[${projectName}] Codex: plugins off, MCP servers off: ${servers.map(s => s.name).join(', ') || 'none'}`)
+  return { features, mcp_servers }
+}
+
+const codex = new Codex({ config: lockdownConfig() })
 let thread = readThreadId() ? codex.resumeThread(readThreadId(), threadOptions()) : codex.startThread(threadOptions())
 let busy = false
 let queue = Promise.resolve()

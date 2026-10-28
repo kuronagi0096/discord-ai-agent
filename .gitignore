@@ -1,0 +1,11 @@
+# Personal data — never commit
+# Bot tokens, access lists, status and conversation IDs (one folder per project)
+discord-*/
+# Your user ID and registered projects
+claude-discord.json
+# Rebuilt by prepare.ts on every start (contains this folder's absolute path)
+channel-settings.json
+# Personal handoff notes (IDs, paths)
+引き継ぎ.md
+# Claude Code local settings
+.claude/

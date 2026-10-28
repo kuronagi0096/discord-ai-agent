@@ -1,5 +1,5 @@
 # claude-discord.ps1  (v2)
-# One Discord bot + one Claude Code session per project.
+# One Discord bot + one Claude Code or Codex session per project.
 # Nothing in this file needs editing. Projects are stored in:
 #   claude-discord.json (in the same folder as this script)
 #
@@ -12,6 +12,7 @@
 #             -Resume <session id> continues that conversation instead of starting a new one
 #             (used by the /restart and /resume commands on Discord, see discord-commands.ts)
 #   mention : react only to @bot in the channel, or to everything   e.g. mention my-project on
+#   agent   : choose claude or codex for a project                  e.g. agent my-project codex
 #   setup   : rewrite access.json for all projects, ask for any missing tokens
 #
 # (Messages are ASCII only on purpose, so the file works in Windows PowerShell 5.1
@@ -19,7 +20,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'mention', 'setup')]
+    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'mention', 'agent', 'setup')]
     [string]$Command = 'list',
 
     [Parameter(Position = 1)]
@@ -72,6 +73,7 @@ function Read-Config {
                 path      = [string]$x.path
                 channelId = [string]$x.channelId
                 requireMention = [bool]$x.requireMention
+                agent     = if ($x.agent -eq 'codex') { 'codex' } else { 'claude' }
             })
         }
     }
@@ -194,8 +196,6 @@ function Get-RunningMap {
 }
 
 function Start-Project($cfg, $p, [string]$resumeId = '') {
-    Clear-McpFailure
-    Invoke-Prepare
     $dir = Get-StateDir $p.name
     if (-not (Test-Path -LiteralPath (Join-Path $dir '.env'))) {
         Write-Warning "[$($p.name)] no token saved. Run 'setup'."
@@ -207,13 +207,30 @@ function Start-Project($cfg, $p, [string]$resumeId = '') {
     }
     $qDir  = $dir -replace "'", "''"
     $qPath = $p.path -replace "'", "''"
-    $resumeArg = if ($resumeId -match '^[0-9a-fA-F-]{36}$') { "--resume $resumeId" } else { '' }
-    $cmd = @(
-        "`$Host.UI.RawUI.WindowTitle = 'claude: $($p.name)'"
-        "`$env:DISCORD_STATE_DIR = '$qDir'"
-        "Set-Location -LiteralPath '$qPath'"
-        "claude --channels $Plugin --settings '$($ChannelSettings -replace "'", "''")' $resumeArg $($cfg.extraArgs)"
-    ) -join '; '
+    $agent = if ($p.agent -eq 'codex') { 'codex' } else { 'claude' }
+    if ($agent -eq 'codex') {
+        $runner = (Join-Path $Root 'codex-discord.mjs') -replace "'", "''"
+        $qName = ([string]$p.name) -replace "'", "''"
+        $cmd = @(
+            "`$Host.UI.RawUI.WindowTitle = 'codex: $qName'"
+            "`$env:DISCORD_STATE_DIR = '$qDir'"
+            "`$env:CODEX_PROJECT_PATH = '$qPath'"
+            "`$env:CODEX_PROJECT_NAME = '$qName'"
+            "Set-Location -LiteralPath '$qPath'"
+            "node '$runner'"
+        ) -join '; '
+    }
+    else {
+        Clear-McpFailure
+        Invoke-Prepare
+        $resumeArg = if ($resumeId -match '^[0-9a-fA-F-]{36}$') { "--resume $resumeId" } else { '' }
+        $cmd = @(
+            "`$Host.UI.RawUI.WindowTitle = 'claude: $($p.name)'"
+            "`$env:DISCORD_STATE_DIR = '$qDir'"
+            "Set-Location -LiteralPath '$qPath'"
+            "claude --channels $Plugin --settings '$($ChannelSettings -replace "'", "''")' $resumeArg $($cfg.extraArgs)"
+        ) -join '; '
+    }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
     Start-Process powershell -ArgumentList @('-NoExit', '-EncodedCommand', $encoded)
     Write-Host "[$($p.name)] started."
@@ -257,7 +274,9 @@ function Invoke-Add {
         }
     }
 
-    $p = [ordered]@{ name = $projectName; path = $folder; channelId = $channel }
+    $agent = Ask 'Agent (claude/codex)' 'codex'
+    if ($agent -notin @('claude', 'codex')) { throw "Agent must be 'claude' or 'codex'." }
+    $p = [ordered]@{ name = $projectName; path = $folder; channelId = $channel; requireMention = $false; agent = $agent }
     Write-Access $cfg $p
     if (-not (Save-Token $p)) {
         Write-Warning 'No token entered. Nothing was registered.'
@@ -313,6 +332,7 @@ function Invoke-List {
         Write-Host ''
         Write-Host "[$($p.name)]"
         Write-Host "  folder  : $($p.path)"
+        Write-Host "  agent   : $($p.agent)"
         Write-Host "  channel : $($p.channelId)"
         Write-Host "  reacts  : $(if ($p.requireMention) { 'only to @bot (mention on)' } else { 'to every message (mention off)' })"
         Write-Host "  token   : $(if ($hasToken) { 'saved' } else { 'missing (run setup)' })"
@@ -356,6 +376,16 @@ function Invoke-Mention {
     Write-Host "[$($p.name)] $(if ($p.requireMention) { 'reacts only to @bot (and replies to the bot)' } else { 'reacts to every message' }) in its channel. Takes effect now."
 }
 
+function Invoke-Agent {
+    if (-not $Name -or $Value -notin @('claude', 'codex')) { throw 'Usage: agent <name> claude|codex' }
+    $cfg = Read-Config
+    $p = Find-Project $cfg $Name
+    if ($null -eq $p) { throw "No project named '$Name'." }
+    $p.agent = $Value
+    Save-Config $cfg
+    Write-Host "[$($p.name)] agent is now $Value. Restart it if it is running."
+}
+
 function Invoke-Setup {
     $cfg = Read-Config
     Confirm-UserId $cfg
@@ -373,5 +403,6 @@ switch ($Command) {
     'start'  { Invoke-Start }
     'restart' { Invoke-Restart }
     'mention' { Invoke-Mention }
+    'agent'   { Invoke-Agent }
     'setup'  { Invoke-Setup }
 }

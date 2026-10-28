@@ -1,5 +1,5 @@
 ﻿# claude-discord-gui.ps1
-# Discord から話せる Claude Code（claude-discord.ps1）のプロジェクトを、画面で追加・編集・削除・起動・停止する。
+# Discord から話せる Claude Code / Codex のプロジェクトを、画面で追加・編集・削除・起動・停止する。
 # 設定の形は claude-discord.ps1 と同じ（このスクリプトと同じフォルダの claude-discord.json と discord-<名前>\access.json / .env）。
 # Windows PowerShell 5.1 で日本語が化けないよう、このファイルは UTF-8（BOM 付き）で保存する。
 param([switch]$NoShow)
@@ -41,6 +41,7 @@ function Read-Config {
                 path      = [string]$x.path
                 channelId = [string]$x.channelId
                 requireMention = [bool]$x.requireMention
+                agent     = if ($x.agent -eq 'codex') { 'codex' } else { 'claude' }
             })
         }
     }
@@ -132,19 +133,34 @@ function Invoke-Prepare {
 }
 
 function Start-Project($cfg, $p) {
-    try { Clear-McpFailure } catch { }
-    Invoke-Prepare
     $dir = Get-StateDir $p.name
     if (-not (Test-Token $p)) { throw "[$($p.name)] ボットのトークンがありません。「編集」で入れてください。" }
     if (-not (Test-Path -LiteralPath $p.path)) { throw "[$($p.name)] フォルダが見つかりません：$($p.path)" }
     $qDir  = $dir -replace "'", "''"
     $qPath = $p.path -replace "'", "''"
-    $cmd = @(
-        "`$Host.UI.RawUI.WindowTitle = 'claude: $($p.name)'"
-        "`$env:DISCORD_STATE_DIR = '$qDir'"
-        "Set-Location -LiteralPath '$qPath'"
-        "claude --channels $Plugin --settings '$($ChannelSettings -replace "'", "''")' $($cfg.extraArgs)"
-    ) -join '; '
+    $agent = if ($p.agent -eq 'codex') { 'codex' } else { 'claude' }
+    if ($agent -eq 'codex') {
+        $runner = (Join-Path $Root 'codex-discord.mjs') -replace "'", "''"
+        $qName = ([string]$p.name) -replace "'", "''"
+        $cmd = @(
+            "`$Host.UI.RawUI.WindowTitle = 'codex: $qName'"
+            "`$env:DISCORD_STATE_DIR = '$qDir'"
+            "`$env:CODEX_PROJECT_PATH = '$qPath'"
+            "`$env:CODEX_PROJECT_NAME = '$qName'"
+            "Set-Location -LiteralPath '$qPath'"
+            "node '$runner'"
+        ) -join '; '
+    }
+    else {
+        try { Clear-McpFailure } catch { }
+        Invoke-Prepare
+        $cmd = @(
+            "`$Host.UI.RawUI.WindowTitle = 'claude: $($p.name)'"
+            "`$env:DISCORD_STATE_DIR = '$qDir'"
+            "Set-Location -LiteralPath '$qPath'"
+            "claude --channels $Plugin --settings '$($ChannelSettings -replace "'", "''")' $($cfg.extraArgs)"
+        ) -join '; '
+    }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
     Start-Process powershell -ArgumentList @('-NoExit', '-EncodedCommand', $encoded)
 }
@@ -203,7 +219,7 @@ function New-Button($text, $x, $y, $w = 120) {
     return $b
 }
 
-# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token; requireMention } を返す（編集でトークンが空なら今のまま）
+# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token; requireMention; agent } を返す（編集でトークンが空なら今のまま）
 function Show-ProjectDialog($cfg, $existing) {
     $editing = $null -ne $existing
     $dlg = New-Object System.Windows.Forms.Form
@@ -211,7 +227,7 @@ function Show-ProjectDialog($cfg, $existing) {
     $dlg.Font = $font
     $dlg.FormBorderStyle = 'FixedDialog'; $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
     $dlg.StartPosition = 'CenterParent'
-    $dlg.ClientSize = New-Object System.Drawing.Size(560, 296)
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 336)
 
     $dlg.Controls.Add((New-Label '作業フォルダ' 16 18))
     $tPath = New-TextBox 140 18 310
@@ -228,17 +244,25 @@ function Show-ProjectDialog($cfg, $existing) {
     $hint = New-Label '' 140 166 404
     $hint.ForeColor = [System.Drawing.Color]::DimGray
     $hint.Text = if ($editing) { '空のままなら、今のトークンを使います' } else { 'Discord Developer Portal の Bot → Reset Token で出る文字列' }
+    $dlg.Controls.Add((New-Label 'エージェント' 16 196))
+    $cAgent = New-Object System.Windows.Forms.ComboBox
+    $cAgent.DropDownStyle = 'DropDownList'
+    $cAgent.Location = New-Object System.Drawing.Point(140, 194); $cAgent.Size = New-Object System.Drawing.Size(200, 24)
+    [void]$cAgent.Items.Add('Codex')
+    [void]$cAgent.Items.Add('Claude Code')
+    $cAgent.SelectedIndex = 0
     $cMention = New-Object System.Windows.Forms.CheckBox
     $cMention.Text = 'チャンネルでは @ボット したとき（とボットへの返信）だけ反応する'
-    $cMention.Location = New-Object System.Drawing.Point(140, 196); $cMention.Size = New-Object System.Drawing.Size(404, 24)
-    $ok = New-Button 'OK' 330 248 100
-    $cancel = New-Button 'キャンセル' 444 248 100
-    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $cMention, $ok, $cancel))
+    $cMention.Location = New-Object System.Drawing.Point(140, 232); $cMention.Size = New-Object System.Drawing.Size(404, 24)
+    $ok = New-Button 'OK' 330 288 100
+    $cancel = New-Button 'キャンセル' 444 288 100
+    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $cAgent, $cMention, $ok, $cancel))
     $dlg.AcceptButton = $ok; $dlg.CancelButton = $cancel
 
     if ($editing) {
         $tPath.Text = $existing.path; $tName.Text = $existing.name; $tName.Enabled = $false; $tChannel.Text = $existing.channelId
         $cMention.Checked = [bool]$existing.requireMention
+        $cAgent.SelectedIndex = if ($existing.agent -eq 'codex') { 0 } else { 1 }
     }
 
     $bBrowse.Add_Click({
@@ -267,7 +291,8 @@ function Show-ProjectDialog($cfg, $existing) {
             if ($other.channelId -eq $channel -and $other.name -ne $name) { Show-Message "このチャンネルは「$($other.name)」で使っています。" 'Warning'; return }
         }
         if (-not $editing -and -not $token) { Show-Message 'ボットのトークンを入れてください。' 'Warning'; return }
-        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token; requireMention = $cMention.Checked }
+        $agent = if ($cAgent.SelectedIndex -eq 0) { 'codex' } else { 'claude' }
+        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token; requireMention = $cMention.Checked; agent = $agent }
         $dlg.DialogResult = 'OK'
         $dlg.Close()
     })
@@ -290,7 +315,8 @@ $list.Size = New-Object System.Drawing.Size(730, 360)
 $list.Anchor = 'Top, Bottom, Left, Right'
 [void]$list.Columns.Add('名前', 130)
 [void]$list.Columns.Add('状態', 70)
-[void]$list.Columns.Add('作業フォルダ', 300)
+[void]$list.Columns.Add('Agent', 80)
+[void]$list.Columns.Add('作業フォルダ', 240)
 [void]$list.Columns.Add('チャンネル ID', 150)
 [void]$list.Columns.Add('トークン', 70)
 [void]$list.Columns.Add('反応', 80)
@@ -351,6 +377,7 @@ function Update-List {
         $item.Tag = $p.name
         $isRunning = $script:running.ContainsKey($p.name)
         [void]$item.SubItems.Add($(if ($isRunning) { '起動中' } else { '停止' }))
+        [void]$item.SubItems.Add($(if ($p.agent -eq 'codex') { 'Codex' } else { 'Claude' }))
         [void]$item.SubItems.Add($p.path)
         [void]$item.SubItems.Add($p.channelId)
         [void]$item.SubItems.Add($(if (Test-Token $p) { 'あり' } else { 'なし' }))
@@ -384,7 +411,7 @@ $buttons['add'].Add_Click({ Invoke-Safely {
     if (-not (Confirm-UserId)) { return }
     $r = Show-ProjectDialog $script:cfg $null
     if (-not $r) { return }
-    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId; requireMention = $r.requireMention }
+    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId; requireMention = $r.requireMention; agent = $r.agent }
     Write-Access $script:cfg $p
     Save-Token $p $r.token
     [void]$script:cfg.projects.Add($p)
@@ -397,10 +424,11 @@ $buttons['edit'].Add_Click({ Invoke-Safely {
     if (-not $p) { return }
     $r = Show-ProjectDialog $script:cfg $p
     if (-not $r) { return }
-    $needsRestart = ($p.path -ne $r.path) -or ($p.channelId -ne $r.channelId) -or [bool]$r.token
+    $needsRestart = ($p.path -ne $r.path) -or ($p.channelId -ne $r.channelId) -or ($p.agent -ne $r.agent) -or [bool]$r.token
     $p.path = $r.path
     $p.channelId = $r.channelId
     $p.requireMention = $r.requireMention
+    $p.agent = $r.agent
     Write-Access $script:cfg $p
     if ($r.token) { Save-Token $p $r.token }
     Save-Config $script:cfg

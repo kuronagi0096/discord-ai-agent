@@ -1,7 +1,7 @@
 ﻿# setup.ps1 — Discord から話せる Claude Code の初回セットアップ（setup.cmd から動く）
 #
 # することは次の 4 つ。それぞれ実行前に確認する。何度実行しても大丈夫。
-#   1. claude と bun が使えるか確かめる
+#   1. claude / codex、node、bun が使えるか確かめる
 #   2. discord プラグインが入っていなければ入れる
 #   3. ユーザー設定（~/.claude/settings.json）でプラグインを無効にする
 #      … Discord 用ではない Claude（デスクトップアプリなど）がトークンなしでプラグインを動かして失敗し、
@@ -23,17 +23,24 @@ function Step([string]$title) {
     Write-Host "== $title ==" -ForegroundColor Cyan
 }
 
-Write-Host 'Discord から話せる Claude Code — セットアップ'
+Write-Host 'Discord から話せる Claude Code / Codex — セットアップ'
 Write-Host "フォルダ：$Root"
 
-# ---------- 1. claude と bun ----------
+# ---------- 1. claude / codex と実行環境 ----------
 Step '1. 必要なもの'
 $missing = $false
 if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host 'claude … OK' }
 else {
-    Write-Host 'claude が見つかりません。Claude Code を入れてください：https://docs.claude.com/claude-code' -ForegroundColor Yellow
+    Write-Host 'claude が見つかりません（Claude Code を使う場合だけ必要です）。' -ForegroundColor Yellow
+}
+if (Get-Command codex -ErrorAction SilentlyContinue) { Write-Host 'codex … OK' }
+else { Write-Host 'codex が見つかりません（Codex を使う場合は Codex アプリまたは CLI を入れて、先にログインしてください）。' -ForegroundColor Yellow }
+if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
+    Write-Host 'claude または codex のどちらかが必要です。' -ForegroundColor Yellow
     $missing = $true
 }
+if (Get-Command node -ErrorAction SilentlyContinue) { Write-Host 'node … OK' }
+else { Write-Host 'node が見つかりません。Codex SDK には Node.js 18 以上が必要です。' -ForegroundColor Yellow; $missing = $true }
 if (Get-Command bun -ErrorAction SilentlyContinue) { Write-Host 'bun … OK' }
 else {
     Write-Host 'bun が見つかりません。PowerShell で次を実行して入れてから、新しいウィンドウでやり直してください：' -ForegroundColor Yellow
@@ -41,6 +48,11 @@ else {
     $missing = $true
 }
 if ($missing) { Read-Host '終了します（Enter）'; exit 1 }
+
+if (-not (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk'))) {
+    if (Ask-YesNo 'Codex SDK と Discord クライアントを npm install しますか？') { & npm install --prefix $Root }
+    else { Write-Host 'Codex を使う前に、このフォルダで npm install を実行してください。' -ForegroundColor Yellow }
+}
 
 # ---------- 2. プラグイン ----------
 Step '2. discord プラグイン'

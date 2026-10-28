@@ -9,3 +9,5 @@ channel-settings.json
 引き継ぎ.md
 # Claude Code local settings
 .claude/
+# Installed JavaScript dependencies
+node_modules/

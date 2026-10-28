@@ -1,14 +1,19 @@
-# Discord から話せる Claude Code
+# Discord から話せる Claude Code / Codex
 
-Discord のチャンネルから、自分の PC で動いている Claude Code に話しかけて作業してもらうための仕組みです（Windows 用）。
-公式プラグイン `discord@claude-plugins-official`（Claude Code の「チャンネル」機能・試験提供）を使い、
-**1 プロジェクト = 1 ボット = 1 チャンネル = 1 つの Claude Code セッション** で動かします。
+Discord のチャンネルから、自分の PC で動いている Claude Code または Codex に話しかけて作業してもらうための仕組みです（Windows 用）。
+プロジェクトごとに使うエージェントを選べます。
+
+Codex は公式 `@openai/codex-sdk` で動きます。会話 ID は自動保存されるため、ボットを再起動しても会話を続けられます。
+Codex は `workspace-write` サンドボックスかつ承認要求なしで動かし、登録した作業フォルダ内だけを書き換えます。
+
+Claude Code を選んだプロジェクトでは、従来どおり公式プラグイン `discord@claude-plugins-official` を使います。
+**1 プロジェクト = 1 ボット = 1 チャンネル = 1 つの AI セッション** で動かします。
 
 話しかけられるのは、登録した自分の Discord アカウントだけです（そのチャンネルと DM）。
 
 ## できること
 
-- **チャンネルで話しかける** … Claude が作業して、返事をチャンネルに書きます。画像やファイルの受け渡しもできます。
+- **チャンネルで話しかける** … Claude または Codex が作業して、返事をチャンネルに書きます。画像やファイルの受け渡しもできます。
 - **ステータス表示** … ボットの吹き出しとオンラインの丸で、今の様子が分かります。
 
   | いつ | 丸 | 吹き出し |
@@ -17,8 +22,8 @@ Discord のチャンネルから、自分の PC で動いている Claude Code �
   | 許可や答えを待っている | 黄 | ❓ 確認待ち：… |
   | 待機中 | 緑 | なし |
 
-- **許可の確認をボタンで** … Claude がコマンドの実行などの許可を求めると、チャンネルに中身と［✅ 許可］［❌ 拒否］が出ます。
-- **選択肢の質問をボタンで** … Claude が「どちらにしますか？」と聞くときは、選択肢がボタンで出ます。
+- **許可の確認をボタンで（Claude Code）** … Claude がコマンドの実行などの許可を求めると、チャンネルに中身と［✅ 許可］［❌ 拒否］が出ます。
+- **選択肢の質問をボタンで（Claude Code）** … Claude が「どちらにしますか？」と聞くときは、選択肢がボタンで出ます。
 - **スラッシュコマンド**
 
   | コマンド | すること |
@@ -34,7 +39,8 @@ Discord のチャンネルから、自分の PC で動いている Claude Code �
 ## 必要なもの
 
 - Windows 10 / 11（Windows PowerShell 5.1）
-- [Claude Code](https://docs.claude.com/claude-code)（`claude` コマンド）
+- [Codex](https://learn.chatgpt.com/docs/codex-cli)（`codex` コマンドでログイン済み）または [Claude Code](https://docs.claude.com/claude-code)（`claude` コマンド）
+- Node.js 18 以上（Codex SDK と Discord ボット用）
 - [bun](https://bun.sh)（プラグインとこのフォルダのスクリプトを動かす）
 - Discord のサーバー（自分が管理できるもの）と、プロジェクトごとのボット
 
@@ -62,7 +68,7 @@ Discord のチャンネルから、自分の PC で動いている Claude Code �
    - できた URL を開いて、自分のサーバーに入れる
 4. Discord でプロジェクト用のチャンネルを作ります（非公開チャンネルなら、チャンネルの権限にボットを足す）。
    設定 → 詳細設定 → **開発者モード** をオンにして、チャンネルを右クリック →「チャンネル ID をコピー」。
-5. 「Claude Discord 管理」の **追加…** で、作業フォルダ・名前・チャンネル ID・トークンを入れます。
+5. 「Claude Discord 管理」の **追加…** で、作業フォルダ・名前・チャンネル ID・トークンを入れ、**Codex** または **Claude Code** を選びます。
    その前に一度だけ、管理画面の下の「あなたの Discord ユーザー ID」に自分の ID を入れて「保存」します
    （自分のアイコンを右クリック →「ユーザー ID をコピー」）。
 
@@ -85,14 +91,16 @@ Discord のチャンネルから、自分の PC で動いている Claude Code �
   cdiscord restart 名前              閉じて起動し直す（-Resume <会話ID> で会話を引き継ぐ）
   cdiscord add                       プロジェクトのフォルダで実行すると登録（質問に答える）
   cdiscord mention 名前 on|off       チャンネルで @ したときだけ反応するか（すぐ効く）
+  cdiscord agent 名前 codex|claude   使うエージェントを切り替える（起動中なら再起動が必要）
   cdiscord remove 名前               登録を消す
   cdiscord setup                     access.json を作り直し、足りないトークンを聞く
   ```
 
 ## 気をつけること
 
-- **ボットは、あなたの PC の上で、あなたの権限で Claude Code を動かします。** トークンは他人に渡さないでください。
+- **ボットは、あなたの PC の上で、あなたの権限で Claude Code / Codex を動かします。** トークンは他人に渡さないでください。
   トークンは `discord-<名前>\.env` に保存され、`.gitignore` で Git には入りません。
+- **Codex は PC 上でコードを読み書きします。** この実装では作業フォルダ内への書き込みだけを許可し、外部コマンドの追加承認は行いません。
 - ステータスの吹き出し（指示の頭やファイル名）は、サーバーにいる全員に見えます。ほかの人がいるサーバーで使うなら、
   `status-presence.ts` の `toPresence` で文言を固定にしてください。
 - PC がスリープするとボットはオフラインになります。

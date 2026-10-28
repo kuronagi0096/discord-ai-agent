@@ -13,6 +13,8 @@
 #             (used by the /restart and /resume commands on Discord, see discord-commands.ts)
 #   mention : react only to @bot in the channel, or to everything   e.g. mention my-project on
 #   agent   : choose claude or codex for a project                  e.g. agent my-project codex
+#   mcp     : MCP servers a Codex project may use (all others are off)
+#             e.g. mcp my-project (show)   mcp my-project a,b   mcp my-project none
 #   setup   : rewrite access.json for all projects, ask for any missing tokens
 #
 # (Messages are ASCII only on purpose, so the file works in Windows PowerShell 5.1
@@ -20,7 +22,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'mention', 'agent', 'setup')]
+    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'mention', 'agent', 'mcp', 'setup')]
     [string]$Command = 'list',
 
     [Parameter(Position = 1)]
@@ -39,6 +41,7 @@ $Plugin     = 'plugin:discord@claude-plugins-official'
 $Root       = $PSScriptRoot   # this script's folder (config, tokens and access.json live here)
 $ConfigFile = Join-Path $Root 'claude-discord.json'
 $Utf8NoBom  = New-Object System.Text.UTF8Encoding($false)
+$McpNamePattern = '^[A-Za-z0-9_-]+$'   # also keeps the names safe inside the start command
 
 # ---------- helpers ----------
 
@@ -74,6 +77,7 @@ function Read-Config {
                 channelId = [string]$x.channelId
                 requireMention = [bool]$x.requireMention
                 agent     = if ($x.agent -eq 'codex') { 'codex' } else { 'claude' }
+                codexMcp  = @(@($x.codexMcp) | Where-Object { $_ -match $McpNamePattern } | ForEach-Object { [string]$_ })
             })
         }
     }
@@ -226,6 +230,7 @@ function Start-Project($cfg, $p, [string]$resumeId = '') {
             "`$env:DISCORD_STATE_DIR = '$qDir'"
             "`$env:CODEX_PROJECT_PATH = '$qPath'"
             "`$env:CODEX_PROJECT_NAME = '$qName'"
+            "`$env:CODEX_ALLOWED_MCP = '$(@($p.codexMcp) -join ',')'"
             "Set-Location -LiteralPath '$qPath'"
             "node '$runner'"
         ) -join '; '
@@ -286,7 +291,7 @@ function Invoke-Add {
 
     $agent = Ask 'Agent (claude/codex)' 'codex'
     if ($agent -notin @('claude', 'codex')) { throw "Agent must be 'claude' or 'codex'." }
-    $p = [ordered]@{ name = $projectName; path = $folder; channelId = $channel; requireMention = $false; agent = $agent }
+    $p = [ordered]@{ name = $projectName; path = $folder; channelId = $channel; requireMention = $false; agent = $agent; codexMcp = @() }
     Write-Access $cfg $p
     if (-not (Save-Token $p)) {
         Write-Warning 'No token entered. Nothing was registered.'
@@ -343,6 +348,7 @@ function Invoke-List {
         Write-Host "[$($p.name)]"
         Write-Host "  folder  : $($p.path)"
         Write-Host "  agent   : $($p.agent)"
+        if ($p.agent -eq 'codex') { Write-Host "  mcp     : $(if (@($p.codexMcp).Count) { @($p.codexMcp) -join ', ' } else { 'none (all off)' })" }
         Write-Host "  channel : $($p.channelId)"
         Write-Host "  reacts  : $(if ($p.requireMention) { 'only to @bot (mention on)' } else { 'to every message (mention off)' })"
         Write-Host "  token   : $(if ($hasToken) { 'saved' } else { 'missing (run setup)' })"
@@ -396,6 +402,38 @@ function Invoke-Agent {
     Write-Host "[$($p.name)] agent is now $Value. Restart it if it is running."
 }
 
+# MCP servers Codex sees in a project folder (with Codex app plugins off, as codex-discord.mjs runs it)
+function Get-CodexMcpNames([string]$folder) {
+    $exe = Join-Path $Root 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { throw 'Codex SDK is not installed. Run setup.cmd.' }
+    Push-Location -LiteralPath $folder
+    try { $json = (& $exe -c features.plugins=false -c features.apps=false mcp list --json) -join "`n" }
+    finally { Pop-Location }
+    $servers = $json | ConvertFrom-Json   # assign first: piped straight on, PS 5.1 passes the whole array as one item
+    @($servers | ForEach-Object { [string]$_.name })
+}
+
+function Invoke-Mcp {
+    if (-not $Name) { throw 'Usage: mcp <name> [server1,server2 | none]' }
+    $cfg = Read-Config
+    $p = Find-Project $cfg $Name
+    if ($null -eq $p) { throw "No project named '$Name'." }
+    if (-not $Value) {
+        $allowed = @($p.codexMcp)
+        Write-Host "[$($p.name)] MCP servers Codex can see in $($p.path):"
+        foreach ($n in (Get-CodexMcpNames $p.path)) {
+            Write-Host ('  {0} {1}' -f $(if ($allowed -contains $n) { '[allowed]' } else { '[off]    ' }), $n)
+        }
+        Write-Host "Allow some: mcp $($p.name) name1,name2   Allow none: mcp $($p.name) none"
+        return
+    }
+    $names = if ($Value -eq 'none') { @() } else { @($Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    foreach ($n in $names) { if ($n -notmatch $McpNamePattern) { throw "Invalid MCP server name: $n" } }
+    $p.codexMcp = $names
+    Save-Config $cfg
+    Write-Host "[$($p.name)] allowed MCP servers: $(if ($names) { $names -join ', ' } else { 'none' }). Restart it if it is running."
+}
+
 function Invoke-Setup {
     $cfg = Read-Config
     Confirm-UserId $cfg
@@ -414,5 +452,6 @@ switch ($Command) {
     'restart' { Invoke-Restart }
     'mention' { Invoke-Mention }
     'agent'   { Invoke-Agent }
+    'mcp'     { Invoke-Mcp }
     'setup'  { Invoke-Setup }
 }

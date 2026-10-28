@@ -20,6 +20,20 @@ function Test-Snowflake([string]$id) {
     ($id -match '^\d{17,20}$') -and ($id -notmatch '^0+$')
 }
 
+# MCP サーバーの名前に使える文字（起動コマンドに埋め込むので、これ以外は受け付けない）
+$McpNamePattern = '^[A-Za-z0-9_-]+$'
+
+# 作業フォルダで Codex に見える MCP サーバーの名前（codex-discord.mjs と同じく、Codex アプリのプラグインは止めて数える）
+function Get-CodexMcpNames([string]$folder) {
+    $exe = Join-Path $Root 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { throw 'Codex SDK が入っていません。setup.cmd を実行してください。' }
+    Push-Location -LiteralPath $folder
+    try { $json = (& $exe -c features.plugins=false -c features.apps=false mcp list --json) -join "`n" }
+    finally { Pop-Location }
+    $servers = $json | ConvertFrom-Json   # いったん変数に入れる（PowerShell 5.1 はそのまま流すと配列を 1 つとして渡す）
+    @($servers | ForEach-Object { [string]$_.name } | Where-Object { $_ -match $McpNamePattern })
+}
+
 function Get-StateDir([string]$projectName) {
     Join-Path $Root ('discord-' + $projectName)
 }
@@ -42,6 +56,7 @@ function Read-Config {
                 channelId = [string]$x.channelId
                 requireMention = [bool]$x.requireMention
                 agent     = if ($x.agent -eq 'codex') { 'codex' } else { 'claude' }
+                codexMcp  = @(@($x.codexMcp) | Where-Object { $_ -match $McpNamePattern } | ForEach-Object { [string]$_ })
             })
         }
     }
@@ -150,6 +165,7 @@ function Start-Project($cfg, $p) {
             "`$env:DISCORD_STATE_DIR = '$qDir'"
             "`$env:CODEX_PROJECT_PATH = '$qPath'"
             "`$env:CODEX_PROJECT_NAME = '$qName'"
+            "`$env:CODEX_ALLOWED_MCP = '$(@($p.codexMcp) -join ',')'"
             "Set-Location -LiteralPath '$qPath'"
             "node '$runner'"
         ) -join '; '
@@ -222,7 +238,7 @@ function New-Button($text, $x, $y, $w = 120) {
     return $b
 }
 
-# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token; requireMention; agent } を返す（編集でトークンが空なら今のまま）
+# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token; requireMention; agent; codexMcp } を返す（編集でトークンが空なら今のまま）
 function Show-ProjectDialog($cfg, $existing) {
     $editing = $null -ne $existing
     $dlg = New-Object System.Windows.Forms.Form
@@ -230,7 +246,7 @@ function Show-ProjectDialog($cfg, $existing) {
     $dlg.Font = $font
     $dlg.FormBorderStyle = 'FixedDialog'; $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
     $dlg.StartPosition = 'CenterParent'
-    $dlg.ClientSize = New-Object System.Drawing.Size(560, 336)
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 456)
 
     $dlg.Controls.Add((New-Label '作業フォルダ' 16 18))
     $tPath = New-TextBox 140 18 310
@@ -257,16 +273,42 @@ function Show-ProjectDialog($cfg, $existing) {
     $cMention = New-Object System.Windows.Forms.CheckBox
     $cMention.Text = 'チャンネルでは @ボット したとき（とボットへの返信）だけ反応する'
     $cMention.Location = New-Object System.Drawing.Point(140, 232); $cMention.Size = New-Object System.Drawing.Size(404, 24)
-    $ok = New-Button 'OK' 330 288 100
-    $cancel = New-Button 'キャンセル' 444 288 100
-    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $cAgent, $cMention, $ok, $cancel))
+    $dlg.Controls.Add((New-Label '使っていい MCP' 16 266))
+    $lMcp = New-Object System.Windows.Forms.CheckedListBox
+    $lMcp.CheckOnClick = $true
+    $lMcp.Location = New-Object System.Drawing.Point(140, 266); $lMcp.Size = New-Object System.Drawing.Size(404, 92)
+    $mcpHint = New-Label '' 140 360 404
+    $mcpHint.ForeColor = [System.Drawing.Color]::DimGray
+    $ok = New-Button 'OK' 330 408 100
+    $cancel = New-Button 'キャンセル' 444 408 100
+    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $cAgent, $cMention, $lMcp, $mcpHint, $ok, $cancel))
     $dlg.AcceptButton = $ok; $dlg.CancelButton = $cancel
+
+    # Codex のときだけ、作業フォルダで見える MCP を並べる。チェックしたものだけ Discord の Codex が使える（ほかは止める）
+    $script:mcpChecked = @(if ($editing) { @($existing.codexMcp) })
+    $script:mcpLoaded = $false
+    $loadMcp = {
+        if ($script:mcpLoaded) { $script:mcpChecked = @($lMcp.CheckedItems | ForEach-Object { [string]$_ }) }
+        $script:mcpLoaded = $false
+        $lMcp.Items.Clear()
+        if ($cAgent.SelectedIndex -ne 0) { $lMcp.Enabled = $false; $mcpHint.Text = 'Codex のときだけ使います'; return }
+        $lMcp.Enabled = $true
+        $folder = $tPath.Text.Trim().Trim('"')
+        if (-not $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) { $mcpHint.Text = '作業フォルダを選ぶと、使える MCP が並びます'; return }
+        try { $names = @(Get-CodexMcpNames $folder) } catch { $mcpHint.Text = "MCP の一覧を読めませんでした：$($_.Exception.Message)"; return }
+        foreach ($n in $names) { [void]$lMcp.Items.Add($n, ($script:mcpChecked -contains $n)) }
+        $script:mcpLoaded = $true
+        $mcpHint.Text = if ($names.Count) { 'チェックしたものだけ使えます。ほかは止めます' } else { 'この作業フォルダで使える MCP はありません' }
+    }
 
     if ($editing) {
         $tPath.Text = $existing.path; $tName.Text = $existing.name; $tName.Enabled = $false; $tChannel.Text = $existing.channelId
         $cMention.Checked = [bool]$existing.requireMention
         $cAgent.SelectedIndex = if ($existing.agent -eq 'codex') { 0 } else { 1 }
     }
+    & $loadMcp
+    $cAgent.Add_SelectedIndexChanged({ & $loadMcp })
+    $tPath.Add_Leave({ & $loadMcp })
 
     $bBrowse.Add_Click({
         $fb = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -277,6 +319,7 @@ function Show-ProjectDialog($cfg, $existing) {
             if (-not $tName.Text -and $tName.Enabled) {
                 $tName.Text = ((Split-Path -Leaf $fb.SelectedPath).ToLower() -replace '[^a-z0-9-]+', '-').Trim('-')
             }
+            & $loadMcp
         }
     })
 
@@ -295,7 +338,9 @@ function Show-ProjectDialog($cfg, $existing) {
         }
         if (-not $editing -and -not $token) { Show-Message 'ボットのトークンを入れてください。' 'Warning'; return }
         $agent = if ($cAgent.SelectedIndex -eq 0) { 'codex' } else { 'claude' }
-        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token; requireMention = $cMention.Checked; agent = $agent }
+        # 一覧が読めなかったとき（Claude を選んだときなど）は、今までの選択をそのまま残す
+        $mcp = if ($script:mcpLoaded) { @($lMcp.CheckedItems | ForEach-Object { [string]$_ }) } else { @($script:mcpChecked) }
+        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token; requireMention = $cMention.Checked; agent = $agent; codexMcp = $mcp }
         $dlg.DialogResult = 'OK'
         $dlg.Close()
     })
@@ -414,7 +459,7 @@ $buttons['add'].Add_Click({ Invoke-Safely {
     if (-not (Confirm-UserId)) { return }
     $r = Show-ProjectDialog $script:cfg $null
     if (-not $r) { return }
-    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId; requireMention = $r.requireMention; agent = $r.agent }
+    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId; requireMention = $r.requireMention; agent = $r.agent; codexMcp = @($r.codexMcp) }
     Write-Access $script:cfg $p
     Save-Token $p $r.token
     [void]$script:cfg.projects.Add($p)
@@ -427,7 +472,9 @@ $buttons['edit'].Add_Click({ Invoke-Safely {
     if (-not $p) { return }
     $r = Show-ProjectDialog $script:cfg $p
     if (-not $r) { return }
-    $needsRestart = ($p.path -ne $r.path) -or ($p.channelId -ne $r.channelId) -or ($p.agent -ne $r.agent) -or [bool]$r.token
+    $mcpChanged = (@($p.codexMcp | Sort-Object) -join ',') -ne (@($r.codexMcp | Sort-Object) -join ',')
+    $needsRestart = ($p.path -ne $r.path) -or ($p.channelId -ne $r.channelId) -or ($p.agent -ne $r.agent) -or [bool]$r.token -or ($mcpChanged -and $r.agent -eq 'codex')
+    $p.codexMcp = @($r.codexMcp)
     $p.path = $r.path
     $p.channelId = $r.channelId
     $p.requireMention = $r.requireMention

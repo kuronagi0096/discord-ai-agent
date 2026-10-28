@@ -129,7 +129,10 @@ function codexBinary() {
   return join(dirname(req.resolve(`${pkg}/package.json`)), 'vendor', triple, 'bin', 'codex.exe')
 }
 
-// MCP サーバーは「全部消す」設定がないので、作業フォルダで見えるものを名前で 1 つずつ止める。
+// プロジェクトごとに使ってよいと決めた MCP サーバー（管理画面か cdiscord mcp で選ぶ。カンマ区切り）
+const allowedMcp = new Set((process.env.CODEX_ALLOWED_MCP || '').split(',').map(v => v.trim()).filter(Boolean))
+
+// MCP サーバーは「全部消す」設定がないので、作業フォルダで見えるもののうち、許可していないものを名前で 1 つずつ止める。
 // 一覧が取れなければ、止められたか分からないまま動かさないよう起動をやめる。
 function lockdownConfig() {
   const features = Object.fromEntries(OFF_FEATURES.map(name => [name, false]))
@@ -137,8 +140,10 @@ function lockdownConfig() {
   const servers = JSON.parse(execFileSync(codexBinary(), [...args, 'mcp', 'list', '--json'], {
     cwd: projectPath, encoding: 'utf8', windowsHide: true,
   }))
-  const mcp_servers = Object.fromEntries(servers.map(s => [s.name, { enabled: false }]))
-  console.log(`[${projectName}] Codex: plugins off, MCP servers off: ${servers.map(s => s.name).join(', ') || 'none'}`)
+  const off = servers.filter(s => !allowedMcp.has(s.name)).map(s => s.name)
+  const on = servers.filter(s => allowedMcp.has(s.name)).map(s => s.name)
+  const mcp_servers = Object.fromEntries(off.map(name => [name, { enabled: false }]))
+  console.log(`[${projectName}] Codex: plugins off, MCP servers allowed: ${on.join(', ') || 'none'} / off: ${off.join(', ') || 'none'}`)
   return { features, mcp_servers }
 }
 

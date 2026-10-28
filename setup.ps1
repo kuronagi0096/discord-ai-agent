@@ -3,7 +3,7 @@
 # することは次の 4 つ。それぞれ実行前に確認する。何度実行しても大丈夫。
 #   1. claude / codex、node、bun が使えるか確かめる
 #   2. discord プラグインが入っていなければ入れる
-#   3. ユーザー設定（~/.claude/settings.json）でプラグインを無効にする
+#   3. ユーザー設定（~/.claude/settings.json）でプラグインを無効にする（画面では「ふだんの Claude と Discord 用の Claude を分ける」）
 #      … Discord 用ではない Claude（デスクトップアプリなど）がトークンなしでプラグインを動かして失敗し、
 #        その「失敗の印」で Discord 用のセッションまでプラグインを飛ばす問題を防ぐ。
 #        Discord 用のセッションでは、起動時に channel-settings.json で有効にする。
@@ -33,13 +33,13 @@ if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host 'claude … O
 else {
     Write-Host 'claude が見つかりません（Claude Code を使う場合だけ必要です）。' -ForegroundColor Yellow
 }
-if (Get-Command codex -ErrorAction SilentlyContinue) { Write-Host 'codex … OK' }
-else { Write-Host 'codex が見つかりません（Codex を使う場合は Codex アプリまたは CLI を入れて、先にログインしてください）。' -ForegroundColor Yellow }
-if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
-    Write-Host 'claude または codex のどちらかが必要です。' -ForegroundColor Yellow
-    $missing = $true
-}
-if (Get-Command node -ErrorAction SilentlyContinue) { Write-Host 'node … OK' }
+$codexCommand = Get-Command codex -ErrorAction SilentlyContinue
+$codexSdk = (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and
+            (Test-Path -LiteralPath (Join-Path $Root 'node_modules\discord.js'))
+if ($codexCommand) { Write-Host 'codex CLI … OK' }
+if ($codexSdk) { Write-Host 'Codex SDK と discord.js（このフォルダの node_modules）… OK' }
+else { Write-Host 'Codex SDK と discord.js（このフォルダの node_modules）… 未インストール（このあと入れるか聞きます）' -ForegroundColor Yellow }
+if (Get-Command node -ErrorAction SilentlyContinue) { Write-Host 'Node.js 本体 … OK' }
 else { Write-Host 'node が見つかりません。Codex SDK には Node.js 18 以上が必要です。' -ForegroundColor Yellow; $missing = $true }
 if (Get-Command bun -ErrorAction SilentlyContinue) { Write-Host 'bun … OK' }
 else {
@@ -49,9 +49,17 @@ else {
 }
 if ($missing) { Read-Host '終了します（Enter）'; exit 1 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk'))) {
-    if (Ask-YesNo 'Codex SDK と Discord クライアントを npm install しますか？') { & npm install --prefix $Root }
-    else { Write-Host 'Codex を使う前に、このフォルダで npm install を実行してください。' -ForegroundColor Yellow }
+if (-not $codexSdk) {
+    if (Ask-YesNo 'Codex SDK と discord.js をこのフォルダの node_modules に入れますか？（PC 全体には入りません）') {
+        # npm.ps1 は「& npm ...」の形で呼ぶと引数を読み違える（Unknown command: "pm"）ので npm.cmd を呼ぶ
+        & npm.cmd ci --prefix $Root --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk'))) {
+            Write-Host 'npm ci に失敗しました。上のエラーを確かめてから、もう一度 setup.cmd を実行してください。' -ForegroundColor Red
+            Read-Host '終了します（Enter）'; exit 1
+        }
+        Write-Host 'Codex SDK と discord.js … OK'
+    }
+    else { Write-Host 'Codex を使う前に、もう一度 setup.cmd を実行して入れてください。' -ForegroundColor Yellow }
 }
 
 # ---------- 2. プラグイン ----------
@@ -71,14 +79,29 @@ else {
 }
 
 # ---------- 3. ユーザー設定でプラグインを無効に ----------
-Step '3. ほかの Claude ではプラグインを動かさない'
+Step '3. ふだんの Claude と Discord 用の Claude を分ける'
 $status = (& bun (Join-Path $Root 'setup-tools.ts') plugin-status).Trim()
-if ($status -like '* disabled') { Write-Host 'ユーザー設定で無効になっています … OK' }
+if ($status -like '* disabled') { Write-Host 'Discord とつなぐ部品は、Discord 用の Claude でだけ動く設定です … OK' }
 else {
-    Write-Host 'ユーザー設定（~/.claude/settings.json）で discord プラグインを無効にします。'
-    Write-Host 'Discord 用に起動したセッションでだけ有効になります（バックアップを取ってから書き換えます）。'
-    if (Ask-YesNo '無効にしますか？') { & bun (Join-Path $Root 'setup-tools.ts') disable-plugin }
-    else { Write-Host 'そのままにします。ボットがオンラインにならないことがあれば、ここをやり直してください。' -ForegroundColor Yellow }
+    Write-Host 'Discord とつなぐ部品を、Discord 用の Claude でだけ動くようにします。'
+    Write-Host 'ふだんの Claude の使い勝手は変わりません。'
+    Write-Host ''
+    Write-Host '次に当てはまる人だけ n を選んでください。それ以外は y で大丈夫です。'
+    Write-Host ''
+    Write-Host '  ・ふだんの Claude で discord プラグインを直接使っている'
+    Write-Host '      このしくみを使わずに、公式のやり方で Discord とつないでいる人。'
+    Write-Host '      y にすると、そちらが動かなくなります。'
+    Write-Host ''
+    Write-Host '  ・設定ファイルを自分で管理している'
+    Write-Host '      会社の管理などで、settings.json を勝手に書き換えてほしくない人。'
+    Write-Host ''
+    if (Ask-YesNo 'この設定にしますか？（おすすめ：y）') {
+        $out = & bun (Join-Path $Root 'setup-tools.ts') disable-plugin
+        $backup = $out | Where-Object { $_ -like 'backup: *' } | ForEach-Object { $_.Substring(8) }
+        Write-Host '設定しました。'
+        if ($backup) { Write-Host "元の設定のコピー：$backup" }
+    }
+    else { Write-Host 'そのままにします。あとでボットがオンラインにならないときは、setup.cmd をもう一度実行して、ここで y を選んでください。' -ForegroundColor Yellow }
 }
 
 # ---------- 4. ショートカット ----------

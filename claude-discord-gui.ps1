@@ -140,6 +140,9 @@ function Start-Project($cfg, $p) {
     $qPath = $p.path -replace "'", "''"
     $agent = if ($p.agent -eq 'codex') { 'codex' } else { 'claude' }
     if ($agent -eq 'codex') {
+        $deps = (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and
+                (Test-Path -LiteralPath (Join-Path $Root 'node_modules\discord.js'))
+        if (-not $deps) { throw "[$($p.name)] Codex SDK と discord.js が入っていません。setup.cmd を実行して入れてください。" }
         $runner = (Join-Path $Root 'codex-discord.mjs') -replace "'", "''"
         $qName = ([string]$p.name) -replace "'", "''"
         $cmd = @(

@@ -195,6 +195,12 @@ function Get-RunningMap {
     return $map
 }
 
+# The Codex bot runs on node with packages from this folder's node_modules (setup.cmd installs them).
+function Test-CodexDeps {
+    (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and
+    (Test-Path -LiteralPath (Join-Path $Root 'node_modules\discord.js'))
+}
+
 function Start-Project($cfg, $p, [string]$resumeId = '') {
     $dir = Get-StateDir $p.name
     if (-not (Test-Path -LiteralPath (Join-Path $dir '.env'))) {
@@ -209,6 +215,10 @@ function Start-Project($cfg, $p, [string]$resumeId = '') {
     $qPath = $p.path -replace "'", "''"
     $agent = if ($p.agent -eq 'codex') { 'codex' } else { 'claude' }
     if ($agent -eq 'codex') {
+        if (-not (Test-CodexDeps)) {
+            Write-Warning "[$($p.name)] Codex SDK / discord.js are not installed in $Root\node_modules. Run setup.cmd."
+            return
+        }
         $runner = (Join-Path $Root 'codex-discord.mjs') -replace "'", "''"
         $qName = ([string]$p.name) -replace "'", "''"
         $cmd = @(

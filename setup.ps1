@@ -29,9 +29,10 @@ Write-Host "フォルダ：$Root"
 # ---------- 1. claude / codex と実行環境 ----------
 Step '1. 必要なもの'
 $missing = $false
-if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host 'claude … OK' }
+$hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
+if ($hasClaude) { Write-Host 'claude … OK' }
 else {
-    Write-Host 'claude が見つかりません（Claude Code を使う場合だけ必要です）。' -ForegroundColor Yellow
+    Write-Host 'claude が見つかりません（Claude Code を使う場合だけ必要です）。2・3 番は飛ばします。' -ForegroundColor Yellow
 }
 $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
 $codexSdk = (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and
@@ -64,6 +65,11 @@ if (-not $codexSdk) {
 
 # ---------- 2. プラグイン ----------
 Step '2. discord プラグイン'
+if (-not $hasClaude) {
+    Write-Host 'claude がないので飛ばします（Codex だけ使うなら不要です）。'
+    Write-Host 'あとで Claude Code を使うときは、Claude Code を入れてから setup.cmd をもう一度実行してください。'
+}
+else {
 $status = (& bun (Join-Path $Root 'setup-tools.ts') plugin-status).Trim()
 if ($status -like 'installed*') { Write-Host 'インストール済み … OK' }
 else {
@@ -77,10 +83,13 @@ else {
     }
     else { Write-Host '入れずに進みます（あとで入れてください）。' -ForegroundColor Yellow }
 }
+}
 
 # ---------- 3. ユーザー設定でプラグインを無効に ----------
 Step '3. ふだんの Claude と Discord 用の Claude を分ける'
-$status = (& bun (Join-Path $Root 'setup-tools.ts') plugin-status).Trim()
+if (-not $hasClaude) { Write-Host 'claude がないので飛ばします。' }
+else {
+$status =(& bun (Join-Path $Root 'setup-tools.ts') plugin-status).Trim()
 if ($status -like '* disabled') { Write-Host 'Discord とつなぐ部品は、Discord 用の Claude でだけ動く設定です … OK' }
 else {
     Write-Host 'Discord とつなぐ部品を、Discord 用の Claude でだけ動くようにします。'
@@ -102,6 +111,7 @@ else {
         if ($backup) { Write-Host "元の設定のコピー：$backup" }
     }
     else { Write-Host 'そのままにします。あとでボットがオンラインにならないときは、setup.cmd をもう一度実行して、ここで y を選んでください。' -ForegroundColor Yellow }
+}
 }
 
 # ---------- 4. ショートカット ----------

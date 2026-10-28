@@ -130,6 +130,10 @@ if ($status -like 'installed*') { Write-Host 'インストール済み … OK' }
 else {
     Write-Host 'discord プラグイン（discord@claude-plugins-official）が入っていません。'
     if (Ask-YesNo 'いま入れますか？') {
+        # 入れたばかりの claude は公式マーケットプレイスの一覧が古い（または未登録）で、discord が見つからないことがある
+        Write-Host '公式マーケットプレイスの一覧を最新にしています…'
+        & claude plugin marketplace update claude-plugins-official
+        if ($LASTEXITCODE -ne 0) { & claude plugin marketplace add anthropics/claude-plugins-official }
         & claude plugin install discord@claude-plugins-official
         if ($LASTEXITCODE -ne 0) {
             Write-Host 'インストールに失敗しました。claude を起動して /plugin から discord を入れてから、もう一度 setup してください。' -ForegroundColor Yellow

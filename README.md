@@ -39,18 +39,21 @@ Claude Code を選んだプロジェクトでは、従来どおり公式プラ�
 ## 必要なもの
 
 - Windows 10 / 11（Windows PowerShell 5.1）
-- CodexアプリまたはCodex CLIでChatGPTにログイン済みであること（Discord版はSDK同梱ランタイムを使うため、グローバルな `codex` コマンド自体は不要）
-- Claude Codeを使う場合は [Claude Code](https://docs.claude.com/claude-code) の `claude` コマンド
-  - Claude のデスクトップアプリだけでは入りません。PowerShell で `irm https://claude.ai/install.ps1 | iex` を実行して入れ、新しいウィンドウで `claude --version` が動くか確かめてください。
-- Node.js 18 以上（Codex SDK と Discord ボット用）
-- [bun](https://bun.sh)（プラグインとこのフォルダのスクリプトを動かす）
 - Discord のサーバー（自分が管理できるもの）と、プロジェクトごとのボット
+- Codex を使う場合は ChatGPT のアカウント、Claude Code を使う場合は Claude のアカウント
+
+次のものは、入っていなければ `setup.cmd` が聞いてから公式の方法で入れます。
+
+- Node.js LTS（Codex SDK と Discord ボット用。winget で入れます）
+- [bun](https://bun.sh)（プラグインとこのフォルダのスクリプトを動かす）
+- [Claude Code](https://docs.claude.com/claude-code) の `claude` コマンド（Claude Code を使う人だけ。Claude のデスクトップアプリだけでは入りません）
+- Codex SDK と discord.js（このフォルダの `node_modules` に入れます。PC 全体には入りません。グローバルな `codex` コマンドは不要です）
 
 ## 入れ方
 
 1. このリポジトリを好きな場所に置きます（`git clone` か ZIP）。**置き場所はあとで変えても大丈夫です**（変えたら `setup.cmd` をもう一度実行してショートカットを作り直す）。
 2. `setup.cmd` をダブルクリックします。次のことを、確認しながら進めます。
-   - `claude` / `codex`、Node.js、`bun` があるか確かめ、Codex 用の部品をこのフォルダに入れる
+   - Node.js、`bun`、`claude`（Claude Code を使うと答えた人だけ）、Codex 用の部品を確かめ、なければ入れる
    - discord プラグインが入っていなければ入れる
    - **ふだんの Claude と Discord 用の Claude を分ける** … Discord とつなぐ部品を、Discord 用に起動した Claude でだけ動くようにします。
      ふだんの Claude の使い勝手は変わりません（くわしくは下の「なぜプラグインを無効にするのか」）。
@@ -58,7 +61,9 @@ Claude Code を選んだプロジェクトでは、従来どおり公式プラ�
      - **ふだんの Claude で discord プラグインを直接使っている：** このしくみを使わずに、公式のやり方で Discord とつないでいる人です。`y` にすると、そちらが動かなくなります。
      - **設定ファイルを自分で管理している：** 会社の管理などで、`settings.json` を勝手に書き換えてほしくない人です。
    - デスクトップにショートカット「Claude Discord 起動」「Claude Discord 管理」を作る
-3. プロジェクトごとにボットを作って登録します（次の節）。
+   - Codex にまだログインしていなければ、ログインするか聞く（ブラウザが開きます）
+3. Claude Code を入れたばかりなら、PowerShell で `claude` を一度起動してログインします（終わったら `/exit`）。
+4. プロジェクトごとにボットを作って登録します（次の節）。
 
 ## ボットを作る（プロジェクトごとに 1 つ）
 

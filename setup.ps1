@@ -1,7 +1,7 @@
 ﻿# setup.ps1 — Discord から話せる Claude Code の初回セットアップ（setup.cmd から動く）
 #
 # することは次の 4 つ。それぞれ実行前に確認する。何度実行しても大丈夫。
-#   1. claude / codex、node、bun が使えるか確かめる
+#   1. node、bun、claude（使う人だけ）、Codex 用の部品を確かめ、なければ公式の方法で入れる
 #   2. discord プラグインが入っていなければ入れる
 #   3. ユーザー設定（~/.claude/settings.json）でプラグインを無効にする（画面では「ふだんの Claude と Discord 用の Claude を分ける」）
 #      … Discord 用ではない Claude（デスクトップアプリなど）がトークンなしでプラグインを動かして失敗し、
@@ -23,57 +23,97 @@ function Step([string]$title) {
     Write-Host "== $title ==" -ForegroundColor Cyan
 }
 
+function Has([string]$name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }
+
+# インストーラーが書き換えた PATH を、このウィンドウにも読み込む（新しいウィンドウを開かずに続けるため）
+function Update-Path {
+    $env:Path = (@([Environment]::GetEnvironmentVariable('Path', 'Machine'),
+                   [Environment]::GetEnvironmentVariable('Path', 'User')) | Where-Object { $_ }) -join ';'
+}
+
+# 公式のインストール用スクリプトを別の PowerShell で動かす
+function Invoke-Installer([string]$script) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $script | iex"
+    Update-Path
+}
+
+function Stop-Setup([string]$message) {
+    Write-Host $message -ForegroundColor Red
+    Read-Host '終了します（Enter）'; exit 1
+}
+
 Write-Host 'Discord から話せる Claude Code / Codex — セットアップ'
 Write-Host "フォルダ：$Root"
 
 # ---------- 1. claude / codex と実行環境 ----------
 Step '1. 必要なもの'
-$missing = $false
-$hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
-# 公式インストーラーの入れ先。入れた直後や PATH に入っていないときは、ここにだけある
-$claudeDir = Join-Path $env:USERPROFILE '.local\bin'
-if (-not $hasClaude -and (Test-Path -LiteralPath (Join-Path $claudeDir 'claude.exe'))) {
-    Write-Host "claude コマンドは $claudeDir にありますが、PATH（コマンドを探す場所）に入っていません。" -ForegroundColor Yellow
-    if (Ask-YesNo 'PATH に足しますか？（このユーザーだけ）') {
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-        [Environment]::SetEnvironmentVariable('Path', (@($userPath, $claudeDir) | Where-Object { $_ }) -join ';', 'User')
-        $env:Path = "$env:Path;$claudeDir"
-        $hasClaude = $true
-    }
-}
-if ($hasClaude) { Write-Host 'claude コマンド（Claude Code）… OK' }
+
+if (Has node) { Write-Host 'Node.js … OK' }
 else {
-    Write-Host 'claude コマンド（Claude Code）が見つかりません。' -ForegroundColor Yellow
-    Write-Host '  Claude のデスクトップアプリを入れただけでは、このコマンドは入りません。'
-    Write-Host '  Claude Code を使うなら、PowerShell で次を実行して入れてから、新しいウィンドウで setup.cmd をやり直してください：'
-    Write-Host '    irm https://claude.ai/install.ps1 | iex'
-    Write-Host '  Codex だけ使うなら、このまま進めて大丈夫です（2・3 番は飛ばします）。'
+    Write-Host 'Node.js が入っていません（Codex と Discord のボットに必要です）。' -ForegroundColor Yellow
+    if (-not (Has winget)) { Stop-Setup 'winget がないので自動で入れられません。https://nodejs.org から LTS 版を入れてから、もう一度 setup.cmd を実行してください。' }
+    if (-not (Ask-YesNo 'いま入れますか？（winget で Node.js LTS を入れます）')) { Stop-Setup 'Node.js を入れてから、もう一度 setup.cmd を実行してください。' }
+    & winget install --id OpenJS.NodeJS.LTS -e --source winget
+    Update-Path
+    if (-not (Has node)) { Stop-Setup 'Node.js を入れられませんでした。上のエラーを確かめるか、https://nodejs.org から入れてください。' }
+    Write-Host 'Node.js … OK'
 }
-$codexCommand = Get-Command codex -ErrorAction SilentlyContinue
+
+if (Has bun) { Write-Host 'bun … OK' }
+else {
+    Write-Host 'bun が入っていません（このフォルダのスクリプトを動かすのに必要です）。' -ForegroundColor Yellow
+    if (-not (Ask-YesNo 'いま入れますか？（公式のインストーラー bun.sh/install.ps1 を使います）')) { Stop-Setup 'bun を入れてから、もう一度 setup.cmd を実行してください。' }
+    Invoke-Installer 'bun.sh/install.ps1'
+    if (-not (Has bun)) {
+        $bunDir = Join-Path $env:USERPROFILE '.bun\bin'
+        if (Test-Path -LiteralPath (Join-Path $bunDir 'bun.exe')) { $env:Path = "$env:Path;$bunDir" }
+    }
+    if (-not (Has bun)) { Stop-Setup 'bun を入れられませんでした。上のエラーを確かめてから、もう一度 setup.cmd を実行してください。' }
+    Write-Host 'bun … OK'
+}
+
+# claude は Claude Code を使う人だけ必要。公式インストーラーは ~/.local/bin に入れるが、PATH に足されないことがある
+$claudeDir = Join-Path $env:USERPROFILE '.local\bin'
+function Add-ClaudePath {
+    if ((Has claude) -or -not (Test-Path -LiteralPath (Join-Path $claudeDir 'claude.exe'))) { return }
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    [Environment]::SetEnvironmentVariable('Path', (@($userPath, $claudeDir) | Where-Object { $_ }) -join ';', 'User')
+    $env:Path = "$env:Path;$claudeDir"
+    Write-Host "claude の場所（$claudeDir）を PATH に足しました。"
+}
+$claudeInstalled = $false
+if (-not (Has claude) -and (Test-Path -LiteralPath (Join-Path $claudeDir 'claude.exe'))) {
+    Write-Host "claude は $claudeDir に入っていますが、PATH（コマンドを探す場所）に入っていません。" -ForegroundColor Yellow
+    if (Ask-YesNo 'PATH に足しますか？（このユーザーだけ）') { Add-ClaudePath }
+}
+if (Has claude) { Write-Host 'Claude Code（claude コマンド）… OK' }
+else {
+    Write-Host 'Claude Code（claude コマンド）が入っていません。Codex だけ使うなら不要です。' -ForegroundColor Yellow
+    Write-Host '  Claude のデスクトップアプリを入れただけでは、このコマンドは入りません。'
+    if (Ask-YesNo 'Claude Code も使いますか？（y で公式のインストーラー claude.ai/install.ps1 を使って入れます）') {
+        Invoke-Installer 'https://claude.ai/install.ps1'
+        Add-ClaudePath
+        if (Has claude) { Write-Host 'Claude Code … OK'; $claudeInstalled = $true }
+        else { Write-Host '入れられませんでした。2・3 番は飛ばします。上のエラーを確かめてから、もう一度 setup.cmd を実行してください。' -ForegroundColor Yellow }
+    }
+    else { Write-Host 'Codex だけで進めます（2・3 番は飛ばします）。' }
+}
+$hasClaude = Has claude
+
 $codexSdk = (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk')) -and
             (Test-Path -LiteralPath (Join-Path $Root 'node_modules\discord.js'))
-if ($codexCommand) { Write-Host 'codex CLI … OK' }
 if ($codexSdk) { Write-Host 'Codex SDK と discord.js（このフォルダの node_modules）… OK' }
-else { Write-Host 'Codex SDK と discord.js（このフォルダの node_modules）… 未インストール（このあと入れるか聞きます）' -ForegroundColor Yellow }
-if (Get-Command node -ErrorAction SilentlyContinue) { Write-Host 'Node.js 本体 … OK' }
-else { Write-Host 'node が見つかりません。Codex SDK には Node.js 18 以上が必要です。' -ForegroundColor Yellow; $missing = $true }
-if (Get-Command bun -ErrorAction SilentlyContinue) { Write-Host 'bun … OK' }
-else {
-    Write-Host 'bun が見つかりません。PowerShell で次を実行して入れてから、新しいウィンドウでやり直してください：' -ForegroundColor Yellow
-    Write-Host '  powershell -c "irm bun.sh/install.ps1 | iex"'
-    $missing = $true
-}
-if ($missing) { Read-Host '終了します（Enter）'; exit 1 }
+else { Write-Host 'Codex SDK と discord.js（このフォルダの node_modules）… 未インストール' -ForegroundColor Yellow }
 
 if (-not $codexSdk) {
     if (Ask-YesNo 'Codex SDK と discord.js をこのフォルダの node_modules に入れますか？（PC 全体には入りません）') {
         # npm.ps1 は「& npm ...」の形で呼ぶと引数を読み違える（Unknown command: "pm"）ので npm.cmd を呼ぶ
         & npm.cmd ci --prefix $Root --no-audit --no-fund
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $Root 'node_modules\@openai\codex-sdk'))) {
-            Write-Host 'npm ci に失敗しました。上のエラーを確かめてから、もう一度 setup.cmd を実行してください。' -ForegroundColor Red
-            Read-Host '終了します（Enter）'; exit 1
+            Stop-Setup 'npm ci に失敗しました。上のエラーを確かめてから、もう一度 setup.cmd を実行してください。'
         }
         Write-Host 'Codex SDK と discord.js … OK'
+        $codexSdk = $true
     }
     else { Write-Host 'Codex を使う前に、もう一度 setup.cmd を実行して入れてください。' -ForegroundColor Yellow }
 }
@@ -150,6 +190,22 @@ if (Ask-YesNo '「Claude Discord 起動」「Claude Discord 管理」を作り�
     $l.Save()
     Write-Host '作りました。'
 }
+
+# ---------- ログイン ----------
+# ログインはブラウザで本人がするしかないので、必要なときに案内だけする
+Step 'ログイン'
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+if (Test-Path -LiteralPath (Join-Path $codexHome 'auth.json')) { Write-Host 'Codex（ChatGPT）… ログイン済み' }
+elseif ($codexSdk) {
+    Write-Host 'Codex（ChatGPT）にまだログインしていません（Codex を使う場合だけ必要です）。' -ForegroundColor Yellow
+    if (Ask-YesNo 'いまログインしますか？（ブラウザが開きます）') { & (Join-Path $Root 'node_modules\.bin\codex.cmd') login }
+    else { Write-Host 'あとで Codex アプリでログインするか、setup.cmd をもう一度実行してください。' }
+}
+if ($claudeInstalled) {
+    Write-Host 'Claude Code は入れたばかりなので、ログインが必要です。' -ForegroundColor Yellow
+    Write-Host '  新しい PowerShell で claude を一度起動して、ブラウザでログインしてください（終わったら /exit で閉じます）。'
+}
+elseif ($hasClaude) { Write-Host 'Claude Code … 入っています（まだログインしていなければ、claude を一度起動してログインしてください）' }
 
 # ---------- おわり ----------
 & bun (Join-Path $Root 'prepare.ts') | Out-Null

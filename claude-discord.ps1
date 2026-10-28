@@ -11,6 +11,7 @@
 #   restart : close a project's window and start it again   e.g. restart my-project
 #             -Resume <session id> continues that conversation instead of starting a new one
 #             (used by the /restart and /resume commands on Discord, see discord-commands.ts)
+#   mention : react only to @bot in the channel, or to everything   e.g. mention my-project on
 #   setup   : rewrite access.json for all projects, ask for any missing tokens
 #
 # (Messages are ASCII only on purpose, so the file works in Windows PowerShell 5.1
@@ -18,11 +19,14 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'setup')]
+    [ValidateSet('add', 'remove', 'list', 'start', 'restart', 'mention', 'setup')]
     [string]$Command = 'list',
 
     [Parameter(Position = 1)]
     [string]$Name = '',
+
+    [Parameter(Position = 2)]
+    [string]$Value = '',
 
     [string]$Path = '',
     [string]$ChannelId = '',
@@ -67,6 +71,7 @@ function Read-Config {
                 name      = [string]$x.name
                 path      = [string]$x.path
                 channelId = [string]$x.channelId
+                requireMention = [bool]$x.requireMention
             })
         }
     }
@@ -109,12 +114,14 @@ function Select-Projects($cfg) {
 }
 
 # Only you can talk to the bot, only in this project's channel (and by DM).
+# With requireMention on, the channel only reacts to @bot (and replies to the bot). The plugin
+# re-reads access.json for every message, so the change takes effect at once.
 function Write-Access($cfg, $p) {
     $dir = Get-StateDir $p.name
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $groups = @{}
     $groups[[string]$p.channelId] = [ordered]@{
-        requireMention = $false
+        requireMention = [bool]$p.requireMention
         allowFrom      = @($cfg.userId)
     }
     $access = [ordered]@{
@@ -307,6 +314,7 @@ function Invoke-List {
         Write-Host "[$($p.name)]"
         Write-Host "  folder  : $($p.path)"
         Write-Host "  channel : $($p.channelId)"
+        Write-Host "  reacts  : $(if ($p.requireMention) { 'only to @bot (mention on)' } else { 'to every message (mention off)' })"
         Write-Host "  token   : $(if ($hasToken) { 'saved' } else { 'missing (run setup)' })"
     }
 }
@@ -337,6 +345,17 @@ function Invoke-Restart {
     Start-Project $cfg $p $Resume
 }
 
+function Invoke-Mention {
+    if (-not $Name -or $Value -notin @('on', 'off')) { throw 'Usage: mention <name> on|off' }
+    $cfg = Read-Config
+    $p = Find-Project $cfg $Name
+    if ($null -eq $p) { throw "No project named '$Name'." }
+    $p.requireMention = ($Value -eq 'on')
+    Save-Config $cfg
+    Write-Access $cfg $p
+    Write-Host "[$($p.name)] $(if ($p.requireMention) { 'reacts only to @bot (and replies to the bot)' } else { 'reacts to every message' }) in its channel. Takes effect now."
+}
+
 function Invoke-Setup {
     $cfg = Read-Config
     Confirm-UserId $cfg
@@ -353,5 +372,6 @@ switch ($Command) {
     'list'   { Invoke-List }
     'start'  { Invoke-Start }
     'restart' { Invoke-Restart }
+    'mention' { Invoke-Mention }
     'setup'  { Invoke-Setup }
 }

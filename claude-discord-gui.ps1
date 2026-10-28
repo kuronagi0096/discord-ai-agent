@@ -40,6 +40,7 @@ function Read-Config {
                 name      = [string]$x.name
                 path      = [string]$x.path
                 channelId = [string]$x.channelId
+                requireMention = [bool]$x.requireMention
             })
         }
     }
@@ -60,12 +61,13 @@ function Find-Project($cfg, [string]$projectName) {
 }
 
 # 話しかけられるのは自分だけ（そのプロジェクトのチャンネルと DM）
+# requireMention がオンなら、チャンネルでは @ボット したとき（とボットへの返信）だけ反応する。プラグインは毎回読み直すので、すぐ効く
 function Write-Access($cfg, $p) {
     $dir = Get-StateDir $p.name
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $groups = @{}
     $groups[[string]$p.channelId] = [ordered]@{
-        requireMention = $false
+        requireMention = [bool]$p.requireMention
         allowFrom      = @($cfg.userId)
     }
     $access = [ordered]@{
@@ -201,7 +203,7 @@ function New-Button($text, $x, $y, $w = 120) {
     return $b
 }
 
-# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token } を返す（編集でトークンが空なら今のまま）
+# 追加・編集のダイアログ。OK なら @{ path; name; channelId; token; requireMention } を返す（編集でトークンが空なら今のまま）
 function Show-ProjectDialog($cfg, $existing) {
     $editing = $null -ne $existing
     $dlg = New-Object System.Windows.Forms.Form
@@ -209,7 +211,7 @@ function Show-ProjectDialog($cfg, $existing) {
     $dlg.Font = $font
     $dlg.FormBorderStyle = 'FixedDialog'; $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
     $dlg.StartPosition = 'CenterParent'
-    $dlg.ClientSize = New-Object System.Drawing.Size(560, 260)
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 296)
 
     $dlg.Controls.Add((New-Label '作業フォルダ' 16 18))
     $tPath = New-TextBox 140 18 310
@@ -226,13 +228,17 @@ function Show-ProjectDialog($cfg, $existing) {
     $hint = New-Label '' 140 166 404
     $hint.ForeColor = [System.Drawing.Color]::DimGray
     $hint.Text = if ($editing) { '空のままなら、今のトークンを使います' } else { 'Discord Developer Portal の Bot → Reset Token で出る文字列' }
-    $ok = New-Button 'OK' 330 212 100
-    $cancel = New-Button 'キャンセル' 444 212 100
-    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $ok, $cancel))
+    $cMention = New-Object System.Windows.Forms.CheckBox
+    $cMention.Text = 'チャンネルでは @ボット したとき（とボットへの返信）だけ反応する'
+    $cMention.Location = New-Object System.Drawing.Point(140, 196); $cMention.Size = New-Object System.Drawing.Size(404, 24)
+    $ok = New-Button 'OK' 330 248 100
+    $cancel = New-Button 'キャンセル' 444 248 100
+    $dlg.Controls.AddRange(@($tPath, $bBrowse, $tName, $tChannel, $tToken, $hint, $cMention, $ok, $cancel))
     $dlg.AcceptButton = $ok; $dlg.CancelButton = $cancel
 
     if ($editing) {
         $tPath.Text = $existing.path; $tName.Text = $existing.name; $tName.Enabled = $false; $tChannel.Text = $existing.channelId
+        $cMention.Checked = [bool]$existing.requireMention
     }
 
     $bBrowse.Add_Click({
@@ -261,7 +267,7 @@ function Show-ProjectDialog($cfg, $existing) {
             if ($other.channelId -eq $channel -and $other.name -ne $name) { Show-Message "このチャンネルは「$($other.name)」で使っています。" 'Warning'; return }
         }
         if (-not $editing -and -not $token) { Show-Message 'ボットのトークンを入れてください。' 'Warning'; return }
-        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token }
+        $script:dialogResult = @{ path = (Resolve-Path -LiteralPath $path).ProviderPath; name = $name; channelId = $channel; token = $token; requireMention = $cMention.Checked }
         $dlg.DialogResult = 'OK'
         $dlg.Close()
     })
@@ -287,6 +293,7 @@ $list.Anchor = 'Top, Bottom, Left, Right'
 [void]$list.Columns.Add('作業フォルダ', 300)
 [void]$list.Columns.Add('チャンネル ID', 150)
 [void]$list.Columns.Add('トークン', 70)
+[void]$list.Columns.Add('反応', 80)
 $form.Controls.Add($list)
 
 $buttons = @{}
@@ -347,6 +354,7 @@ function Update-List {
         [void]$item.SubItems.Add($p.path)
         [void]$item.SubItems.Add($p.channelId)
         [void]$item.SubItems.Add($(if (Test-Token $p) { 'あり' } else { 'なし' }))
+        [void]$item.SubItems.Add($(if ($p.requireMention) { '@ のみ' } else { 'すべて' }))
         if ($isRunning) { $item.ForeColor = [System.Drawing.Color]::ForestGreen }
         [void]$list.Items.Add($item)
         if ($p.name -eq $selected) { $item.Selected = $true }
@@ -376,7 +384,7 @@ $buttons['add'].Add_Click({ Invoke-Safely {
     if (-not (Confirm-UserId)) { return }
     $r = Show-ProjectDialog $script:cfg $null
     if (-not $r) { return }
-    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId }
+    $p = [ordered]@{ name = $r.name; path = $r.path; channelId = $r.channelId; requireMention = $r.requireMention }
     Write-Access $script:cfg $p
     Save-Token $p $r.token
     [void]$script:cfg.projects.Add($p)
@@ -389,12 +397,14 @@ $buttons['edit'].Add_Click({ Invoke-Safely {
     if (-not $p) { return }
     $r = Show-ProjectDialog $script:cfg $p
     if (-not $r) { return }
+    $needsRestart = ($p.path -ne $r.path) -or ($p.channelId -ne $r.channelId) -or [bool]$r.token
     $p.path = $r.path
     $p.channelId = $r.channelId
+    $p.requireMention = $r.requireMention
     Write-Access $script:cfg $p
     if ($r.token) { Save-Token $p $r.token }
     Save-Config $script:cfg
-    if ($script:running.ContainsKey($p.name)) { Show-Message '起動中のウィンドウには、停止して起動し直すと反映されます。' }
+    if ($needsRestart -and $script:running.ContainsKey($p.name)) { Show-Message '起動中のウィンドウには、停止して起動し直すと反映されます。' }
 } })
 
 $buttons['remove'].Add_Click({ Invoke-Safely {

@@ -72,7 +72,7 @@ export function attach(mcp: any, client: any, stateDir: string, fetchAllowedChan
   const asks = new Map<string, { question: string; options: string[] }>()
 
   client.on('messageCreate', (msg: any) => {
-    if (isDelivered(stateDir, msg)) lastChat = msg.channelId
+    if (isDelivered(stateDir, msg, client)) lastChat = msg.channelId
   })
 
   // 許可のボタンを出すチャンネル：最後にメッセージが来たチャンネル。まだなければ、登録が 1 つだけならそこ

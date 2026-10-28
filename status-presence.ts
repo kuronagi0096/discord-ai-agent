@@ -49,18 +49,31 @@ function toPresence(s: Status) {
   }
 }
 
-// プラグインが Claude に渡すメッセージか（server.ts の gate() を、許可リストのぶんだけまねたもの）
-export function isDelivered(stateDir: string, msg: any): boolean {
+// プラグインが Claude に渡すメッセージか（server.ts の gate() / isMentioned() を、許可リストと @ のぶんだけまねたもの）
+export function isDelivered(stateDir: string, msg: any, client: any): boolean {
   if (msg.author?.bot) return false
   if (PERMISSION_REPLY_RE.test(msg.content ?? '')) return false
   try {
     const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8'))
     const sender = msg.author.id
     if (!msg.guildId) return (access.allowFrom ?? []).includes(sender)
-    const g = access.groups?.[msg.channelId]
+    const channelId = msg.channel?.isThread?.() ? msg.channel.parentId ?? msg.channelId : msg.channelId
+    const g = access.groups?.[channelId]
     if (!g) return false
-    return !g.allowFrom?.length || g.allowFrom.includes(sender)
+    if (g.allowFrom?.length && !g.allowFrom.includes(sender)) return false
+    if (g.requireMention ?? true) return isMentioned(msg, client, access.mentionPatterns)
+    return true
   } catch { return false }
+}
+
+function isMentioned(msg: any, client: any, patterns?: string[]): boolean {
+  const me = client?.user
+  if (me && msg.mentions?.has?.(me)) return true
+  if (me && msg.mentions?.repliedUser?.id === me.id) return true   // ボットへの返信
+  for (const p of patterns ?? []) {
+    try { if (new RegExp(p, 'i').test(msg.content ?? '')) return true } catch {}
+  }
+  return false
 }
 
 export function attach(client: any, stateDir: string): void {
@@ -83,7 +96,7 @@ export function attach(client: any, stateDir: string): void {
   }
 
   client.on('messageCreate', (msg: any) => {
-    if (!isDelivered(stateDir, msg)) return
+    if (!isDelivered(stateDir, msg, client)) return
     const text = excerpt(msg.content || (msg.attachments?.size ? '（添付ファイル）' : ''))
     try { writeStatus(stateDir, { state: 'working', text }) } catch {}
   })
